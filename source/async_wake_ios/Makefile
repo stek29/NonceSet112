@@ -1,8 +1,8 @@
-include theos/makefiles/common.mk
+include $(THEOS)/makefiles/common.mk
 
 APPLICATION_NAME = async_wake_ios
 
-async_wake_ios_FILES = /mnt/d/codes/async_wake_ios/async_wake.c /mnt/d/codes/async_wake_ios/early_kalloc.c /mnt/d/codes/async_wake_ios/find_port.c /mnt/d/codes/async_wake_ios/kcall.c /mnt/d/codes/async_wake_ios/kmem.c /mnt/d/codes/async_wake_ios/kutils.c /mnt/d/codes/async_wake_ios/main.m /mnt/d/codes/async_wake_ios/symbols.c /mnt/d/codes/async_wake_ios/fun.c /mnt/d/codes/async_wake_ios/fun_objc.m /mnt/d/codes/async_wake_ios/patchfinder64.c /mnt/d/codes/async_wake_ios/NonceSet.mm
+async_wake_ios_FILES = async_wake.c early_kalloc.c find_port.c kcall.c kmem.c kutils.c main.m symbols.c fun.c fun_objc.m patchfinder64.c NonceSet.mm
 async_wake_ios_FRAMEWORKS =  UIKit MessageUI Social Twitter QuartzCore CoreGraphics Foundation CoreFoundation IOKit
 async_wake_ios_PRIVATE_FRAMEWORKS = Preferences
 async_wake_ios_LIBRARIES = MobileGestalt
