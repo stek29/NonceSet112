@@ -2,8 +2,13 @@
 #import <objc/runtime.h>
 #import <sys/stat.h>
 #import <Social/Social.h>
-#import <Foundation/NSTask.h>
-#import <prefs.h>
+#import <Preferences/PSTableCell.h>
+#import <Preferences/PSListController.h>
+#import <Preferences/PSSpecifier.h>
+
+@interface PSListController (meh)
+-(void)_returnKeyPressed:(id)arg1;
+@end
 
 @interface NonceSetController : PSListController
 + (NonceSetController*)shared;
