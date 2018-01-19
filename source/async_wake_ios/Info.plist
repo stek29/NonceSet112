@@ -7,17 +7,17 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleExecutable</key>
-	<string>async_wake_ios</string>
+	<string>NonceSet1112</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.example.async-wake-ios1</string>
+	<string>com.julioverne.NonceSet112</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>async_wake_ios</string>
+	<string>NonceSet1112</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.2</string>
 	<key>CFBundleSupportedPlatforms</key>
 	<array>
 		<string>iPhoneOS</string>
