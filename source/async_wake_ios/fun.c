@@ -12,6 +12,9 @@
 #include <unistd.h>
 #include <errno.h>
 
+uint64_t initOFVariablesADDR;
+uint64_t IODTNVRAMADDR;
+
 #pragma GCC diagnostic ignored "-Wincompatible-pointer-types-discards-qualifiers"
 #pragma GCC diagnostic ignored "-Wunused-variable"
 
@@ -388,7 +391,6 @@ do { \
 	}
 	
 	
-	
 	/*
      nonceenabler
      */
@@ -402,6 +404,8 @@ do { \
 		const uint64_t searchNVRAMProperty = 0x590;
 		// 0 corresponds to root only
 		const uint64_t getOFVariablePerm = 0x558;
+		const uint64_t initOFVariables = 0x540;
+
 		// get user serv
 		io_service_t IODTNVRAMSrv = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("IODTNVRAM"));
 
@@ -422,8 +426,14 @@ do { \
 		uint64_t *buf = calloc(1, vtable_len);
 		rkbuffer(vtable_start, buf, vtable_len);
 		
+
+		textLog("IODTNVRAM vtable: 0x%llx -- 0x%llx", vtable_start, vtable_end);
 		// alter it
-		buf[getOFVariablePerm/4] = buf[searchNVRAMProperty/4];
+		buf[getOFVariablePerm/sizeof(uint64_t)] = buf[searchNVRAMProperty/sizeof(uint64_t)];
+
+		// save to fix resource shortage error if needed
+		initOFVariablesADDR = buf[initOFVariables/sizeof(uint64_t)];
+		IODTNVRAMADDR = IODTNVRAMObj;
 		
 		// allocate buffer in kernel and copy it back
 		uint64_t fake_vtable = kmem_alloc_wired(vtable_len);
@@ -469,9 +479,7 @@ do { \
 	if (container_proc) {
 		wk64(container_proc + offsetof_p_ucred, ccred);
 	}
-	
-	// Cleanup
-	
+
 	wk64(IOSurfaceRootUserClient_port + koffset(KSTRUCT_OFFSET_IPC_PORT_IP_KOBJECT), IOSurfaceRootUserClient_addr);
 	
 }

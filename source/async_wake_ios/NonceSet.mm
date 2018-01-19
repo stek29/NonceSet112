@@ -49,7 +49,16 @@ void textLog(const char *message, ...)
 }
 @end
 
+extern uint64_t initOFVariablesADDR;
+extern uint64_t IODTNVRAMADDR;
 
+kern_return_t fixResShortage(void) {
+	textLog("resource shortage -- trying force init");
+	textLog("initOFVariablesADDR=0x%llx IODTNVRAMADDR=0x%llx", initOFVariablesADDR, IODTNVRAMADDR);
+	kern_return_t ret = kcall(initOFVariablesADDR, 1, IODTNVRAMADDR);
+	textLog("initOFVariables(): 0x%x (%s)", ret, mach_error_string(ret));
+	return ret;
+}
 
 
 bool set_generator(const char *gen)
@@ -68,6 +77,13 @@ bool set_generator(const char *gen)
         } else {
 			kern_return_t kret = IORegistryEntrySetCFProperties(nvram, dict);
 			textLog("IORegistryEntrySetCFProperties: %s.", mach_error_string(kret));
+
+			if (kret == kIOReturnNoResources) {
+				if (fixResShortage() == KERN_SUCCESS) {
+					kret = IORegistryEntrySetCFProperties(nvram, dict);
+				}
+			}
+
 			if(kret == KERN_SUCCESS) {
 				ret = true;
 				textLog("Generator Set.");
@@ -411,6 +427,12 @@ static __strong NonceSetController* NonceSetControllerCC;
         io_string_t buffer;
         unsigned int len = 256;
         kern_return_t kret = IORegistryEntryGetProperty(nvservice, "com.apple.System.boot-nonce", buffer, &len);
+
+		if (kret == kIOReturnNoResources) {
+			if (fixResShortage() == KERN_SUCCESS) {
+				kret = IORegistryEntryGetProperty(nvservice, "com.apple.System.boot-nonce", buffer, &len);
+			}
+		}
         if(kret == KERN_SUCCESS) {
             bootNonce = [NSString stringWithFormat:@"%s", (char *) buffer];
         } else {
