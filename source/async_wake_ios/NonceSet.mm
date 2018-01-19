@@ -78,12 +78,6 @@ bool set_generator(const char *gen)
 			kern_return_t kret = IORegistryEntrySetCFProperties(nvram, dict);
 			textLog("IORegistryEntrySetCFProperties: %s.", mach_error_string(kret));
 
-			if (kret == kIOReturnNoResources) {
-				if (fixResShortage() == KERN_SUCCESS) {
-					kret = IORegistryEntrySetCFProperties(nvram, dict);
-				}
-			}
-
 			if(kret == KERN_SUCCESS) {
 				ret = true;
 				textLog("Generator Set.");
@@ -428,11 +422,6 @@ static __strong NonceSetController* NonceSetControllerCC;
         unsigned int len = 256;
         kern_return_t kret = IORegistryEntryGetProperty(nvservice, "com.apple.System.boot-nonce", buffer, &len);
 
-		if (kret == kIOReturnNoResources) {
-			if (fixResShortage() == KERN_SUCCESS) {
-				kret = IORegistryEntryGetProperty(nvservice, "com.apple.System.boot-nonce", buffer, &len);
-			}
-		}
         if(kret == KERN_SUCCESS) {
             bootNonce = [NSString stringWithFormat:@"%s", (char *) buffer];
         } else {
